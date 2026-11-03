@@ -1,0 +1,21 @@
+services:
+  web:
+    build:
+      context: .
+      args:
+        APP_UID: "${APP_UID:-1000}"
+    image: content-assistant
+    container_name: content-assistant
+    env_file: .env
+    environment:
+      - TZ=Europe/Moscow
+      - DEMO_USAGE_FILE=/app/data/usage.json
+      # Демо открыто без пароля, поэтому расход ключа ограничен изнутри приложения
+      - DEMO_MAX_PER_SESSION=${DEMO_MAX_PER_SESSION:-10}
+      - DEMO_MAX_PER_DAY=${DEMO_MAX_PER_DAY:-150}
+    ports:
+      - "127.0.0.1:8002:8501"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    mem_limit: 700m

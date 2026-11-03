@@ -1,5 +1,7 @@
-openai>=1.0.0
-python-dotenv>=1.0.0
-rich>=13.0.0
-requests>=2.31.0
-streamlit>=1.29.0
+openai==3.42.1
+python-dotenv==1.2.4
+rich==15.0.0
+requests==2.34.2
+# Версия зафиксирована: начиная с 1.62 блок <style> в st.markdown выводится
+# текстом, а не применяется, и оформление приложения разваливается.
+streamlit==1.53.0

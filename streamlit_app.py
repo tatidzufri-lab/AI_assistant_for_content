@@ -3,10 +3,14 @@ Streamlit веб-интерфейс для Vibe Assistant — Познай се�
 """
 import streamlit as st
 import streamlit.components.v1 as components
-from datetime import datetime
+from datetime import datetime, date
+from pathlib import Path
 from typing import Optional
 import html
+import json
+import os
 import re
+import threading
 
 
 def clean_markdown(text: str) -> str:
@@ -44,6 +48,70 @@ try:
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
+
+
+# ============================================================
+# Ограничение бесплатных генераций для публичного демо
+# ============================================================
+# Приложение открыто без пароля, а каждая генерация тратит платный ключ.
+# Ограничить это на уровне nginx нельзя: Streamlit шлёт действия пользователя
+# по уже установленному websocket-соединению, и прокси их не видит как запросы.
+# Поэтому счётчики живут внутри приложения: один на вкладку браузера,
+# второй общий на сутки — он и защищает бюджет.
+
+DEMO_MAX_PER_SESSION = int(os.getenv('DEMO_MAX_PER_SESSION', '10'))
+DEMO_MAX_PER_DAY = int(os.getenv('DEMO_MAX_PER_DAY', '150'))
+DEMO_USAGE_FILE = Path(os.getenv('DEMO_USAGE_FILE', 'data/usage.json'))
+
+_usage_lock = threading.Lock()
+
+
+def _load_usage() -> dict:
+    """Счётчик за сегодня. При смене даты обнуляется."""
+    today = date.today().isoformat()
+    try:
+        data = json.loads(DEMO_USAGE_FILE.read_text(encoding='utf-8'))
+        if data.get('date') == today:
+            return data
+    except (OSError, ValueError):
+        pass
+    return {'date': today, 'count': 0}
+
+
+def get_daily_usage() -> int:
+    with _usage_lock:
+        return _load_usage()['count']
+
+
+def register_generation() -> None:
+    """Отмечает состоявшуюся генерацию в сессии и в суточном счётчике."""
+    st.session_state['generations'] = st.session_state.get('generations', 0) + 1
+    with _usage_lock:
+        data = _load_usage()
+        data['count'] += 1
+        try:
+            DEMO_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            DEMO_USAGE_FILE.write_text(json.dumps(data), encoding='utf-8')
+        except OSError:
+            # Счётчик за сутки — не критичная функция: если том недоступен,
+            # демо продолжает работать под защитой лимита сессии.
+            pass
+
+
+def check_demo_limit() -> Optional[str]:
+    """Возвращает текст отказа, если лимит исчерпан, иначе None."""
+    if st.session_state.get('generations', 0) >= DEMO_MAX_PER_SESSION:
+        return (
+            f"Вы использовали все {DEMO_MAX_PER_SESSION} бесплатных генераций в этой сессии. "
+            "Это демонстрационная версия — полноценный доступ обсуждается индивидуально."
+        )
+    if get_daily_usage() >= DEMO_MAX_PER_DAY:
+        return (
+            "На сегодня общий лимит демонстрационных генераций исчерпан. "
+            "Попробуйте, пожалуйста, завтра."
+        )
+    return None
+
 
 # Настройка страницы
 st.set_page_config(
@@ -537,10 +605,19 @@ def main():
             use_container_width=True
         )
     
+    remaining = max(0, DEMO_MAX_PER_SESSION - st.session_state.get('generations', 0))
+    with col_btn2:
+        st.caption(
+            f"Демо-режим: осталось {remaining} из {DEMO_MAX_PER_SESSION} генераций в этой сессии"
+        )
+
     # Генерация контента
     if generate_clicked:
+        limit_message = check_demo_limit()
         if not topic.strip():
             st.warning("⚠️ Пожалуйста, введите тему или текст для генерации")
+        elif limit_message:
+            st.warning(f"⏳ {limit_message}")
         else:
             with st.spinner(f"🔮 Генерирую через {selected_provider}..."):
                 result = generate_content_api(
@@ -552,6 +629,8 @@ def main():
                 )
             
             if result['success']:
+                register_generation()
+
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown("### ✨ Результат")
                 
