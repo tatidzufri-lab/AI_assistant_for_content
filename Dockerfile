@@ -10,7 +10,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY config.py prompts.py utils.py streamlit_app.py vibe_assistant.py ./
+COPY config.py prompts.py prompts_en.py ui_i18n.py utils.py streamlit_app.py vibe_assistant.py ./
 
 # UID должен совпадать с владельцем примонтированного ./data на хосте,
 # иначе счётчик суточных генераций не сохранится. На сервере это 1000.

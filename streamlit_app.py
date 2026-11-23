@@ -41,6 +41,10 @@ from config import (
 )
 import requests
 from prompts import PROMPT_TEMPLATES
+from prompts_en import PROMPT_TEMPLATES_EN, SYSTEM_PROMPT_EN
+from ui_i18n import (
+    CONTENT_TYPES, LANGS, VIBE_DESCRIPTIONS_EN, VIBE_NAMES, lang_from_accept_language, t,
+)
 
 # Попытка импорта OpenAI
 try:
@@ -98,24 +102,39 @@ def register_generation() -> None:
             pass
 
 
-def check_demo_limit() -> Optional[str]:
+def check_demo_limit(lang: str = "ru") -> Optional[str]:
     """Возвращает текст отказа, если лимит исчерпан, иначе None."""
     if st.session_state.get('generations', 0) >= DEMO_MAX_PER_SESSION:
-        return (
-            f"Вы использовали все {DEMO_MAX_PER_SESSION} бесплатных генераций в этой сессии. "
-            "Это демонстрационная версия — полноценный доступ обсуждается индивидуально."
-        )
+        return t("limit_session", lang, n=DEMO_MAX_PER_SESSION)
     if get_daily_usage() >= DEMO_MAX_PER_DAY:
-        return (
-            "На сегодня общий лимит демонстрационных генераций исчерпан. "
-            "Попробуйте, пожалуйста, завтра."
-        )
+        return t("limit_day", lang)
     return None
 
 
+def init_lang() -> str:
+    """Язык интерфейса и генерации: ?lang= → прошлый выбор в сессии → язык браузера → ru."""
+    if st.session_state.get("lang") not in LANGS:
+        q = st.query_params.get("lang")
+        if q in LANGS:
+            st.session_state["lang"] = q
+        else:
+            try:
+                header = st.context.headers.get("Accept-Language")
+            except Exception:
+                header = None
+            st.session_state["lang"] = lang_from_accept_language(header)
+    return st.session_state["lang"]
+
+
+def on_lang_change() -> None:
+    st.query_params["lang"] = st.session_state["lang"]
+
+
+LANG = init_lang()
+
 # Настройка страницы
 st.set_page_config(
-    page_title="Познай себя — Генератор контента",
+    page_title=t("page_title", LANG),
     page_icon="🌿",
     layout="centered",
     initial_sidebar_state="collapsed"
@@ -322,37 +341,40 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def generate_content_api(vibe: str, task_type: str, topic: str, original_text: Optional[str] = None, provider: str = "OpenAI") -> dict:
-    """Генерирует контент через OpenAI или OpenRouter API"""
+def generate_content_api(vibe: str, task_type: str, topic: str, original_text: Optional[str] = None,
+                         provider: str = "OpenAI", lang: str = "ru") -> dict:
+    """Генерирует контент через OpenAI или OpenRouter API на выбранном языке"""
+    templates = PROMPT_TEMPLATES_EN if lang == "en" else PROMPT_TEMPLATES
+    system_prompt = SYSTEM_PROMPT_EN if lang == "en" else SYSTEM_PROMPT
     
     # Проверка API ключей
     if provider == "OpenAI":
         if not OPENAI_API_KEY:
             return {
                 'success': False,
-                'error': 'OpenAI API ключ не настроен. Добавьте OPENAI_API_KEY в файл .env',
+                'error': t('err_no_openai_key', lang),
                 'content': None
             }
         if not OPENAI_AVAILABLE:
             return {
                 'success': False,
-                'error': 'Библиотека OpenAI не установлена. Выполните: pip install openai',
+                'error': t('err_no_openai_lib', lang),
                 'content': None
             }
     else:  # OpenRouter
         if not OPENROUTER_API_KEY:
             return {
                 'success': False,
-                'error': 'OpenRouter API ключ не настроен. Добавьте OPENROUTER_API_KEY в файл .env',
+                'error': t('err_no_openrouter_key', lang),
                 'content': None
             }
     
     # Получаем промпт
-    prompt_func = PROMPT_TEMPLATES.get(task_type)
+    prompt_func = templates.get(task_type)
     if not prompt_func:
         return {
             'success': False,
-            'error': f'Неизвестный тип контента: {task_type}',
+            'error': t('err_unknown_type', lang, t=task_type),
             'content': None
         }
     
@@ -370,7 +392,7 @@ def generate_content_api(vibe: str, task_type: str, topic: str, original_text: O
             response = client.chat.completions.create(
                 model=OPENAI_MODEL,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=TEMPERATURE,
@@ -394,7 +416,7 @@ def generate_content_api(vibe: str, task_type: str, topic: str, original_text: O
             payload = {
                 'model': OPENROUTER_MODEL,
                 'messages': [
-                    {'role': 'system', 'content': SYSTEM_PROMPT},
+                    {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': user_prompt}
                 ],
                 'temperature': TEMPERATURE,
@@ -428,28 +450,37 @@ def generate_content_api(vibe: str, task_type: str, topic: str, original_text: O
     except Exception as e:
         return {
             'success': False,
-            'error': f'Ошибка генерации ({provider}): {str(e)}',
+            'error': t('err_generation', lang, provider=provider, e=str(e)),
             'content': None
         }
 
 
-# Русские названия вайбов (глобально для доступа везде)
-VIBE_NAMES_RU = {
-    'natural_harmony': 'Естественная гармония',
-    'mindful_support': 'Осознанная поддержка',
-    'transformation': 'Трансформация через действие',
-    'depth_safety': 'Глубина и безопасность',
-    'authenticity': 'Аутентичность'
-}
+# Русские названия вайбов (для совместимости; по языкам — VIBE_NAMES в ui_i18n.py)
+VIBE_NAMES_RU = VIBE_NAMES["ru"]
 
 
 def main():
+    lang = LANG
+
+    # Переключатель языка: тот же язык и у интерфейса, и у генерации
+    _, col_lang = st.columns([5, 1])
+    with col_lang:
+        st.radio(
+            "Language",
+            options=list(LANGS),
+            format_func=lambda x: x.upper(),
+            horizontal=True,
+            key="lang",
+            on_change=on_lang_change,
+            label_visibility="collapsed",
+        )
+
     # Заголовок
-    st.markdown("""
-    <div style="text-align: center; padding: 2rem 0;">
-        <h1>🌿 Познай себя</h1>
+    st.markdown(f"""
+    <div style="text-align: center; padding: 1rem 0 2rem;">
+        <h1>🌿 {t("brand", lang)}</h1>
         <p style="color: #A38DA2; font-size: 1.2rem; margin-top: -10px;">
-            Генератор контента в фирменных вайбах
+            {t("tagline", lang)}
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -462,10 +493,10 @@ def main():
     
     with col1:
         # Выбор вайба
-        st.markdown('<h4 style="color: #4A4F46; margin-bottom: 0.5rem;">🎨 Выберите вайб</h4>', unsafe_allow_html=True)
+        st.markdown(f'<h4 style="color: #4A4F46; margin-bottom: 0.5rem;">{t("choose_vibe", lang)}</h4>', unsafe_allow_html=True)
         
         vibe_options = {
-            f"{v['emojis']} {VIBE_NAMES_RU.get(k, v['name'])}": k 
+            f"{v['emojis']} {VIBE_NAMES[lang].get(k, v['name'])}": k 
             for k, v in VIBES.items()
         }
         
@@ -481,22 +512,16 @@ def main():
         st.markdown(f"""
         <div class="vibe-card">
             <small style="color: #4A4F46;">
-                {vibe_info['description']}
+                {VIBE_DESCRIPTIONS_EN.get(selected_vibe, vibe_info['description']) if lang == 'en' else vibe_info['description']}
             </small>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         # Выбор типа контента
-        st.markdown('<h4 style="color: #4A4F46; margin-bottom: 0.5rem;">📝 Тип контента</h4>', unsafe_allow_html=True)
+        st.markdown(f'<h4 style="color: #4A4F46; margin-bottom: 0.5rem;">{t("content_type", lang)}</h4>', unsafe_allow_html=True)
         
-        content_types = {
-            "📱 Пост для Instagram": "post",
-            "📖 Идея для Stories": "story",
-            "✏️ Редактор подписи": "caption",
-            "💡 Идеи контента (5 шт)": "ideas",
-            "📧 Email-рассылка": "email"
-        }
+        content_types = CONTENT_TYPES[lang]
         
         selected_type_display = st.selectbox(
             "Тип",
@@ -508,7 +533,7 @@ def main():
     st.markdown("<br>", unsafe_allow_html=True)
     
     # Выбор провайдера (модели)
-    st.markdown('<h4 style="color: #4A4F46; margin-bottom: 0.5rem;">🤖 Модель генерации</h4>', unsafe_allow_html=True)
+    st.markdown(f'<h4 style="color: #4A4F46; margin-bottom: 0.5rem;">{t("model", lang)}</h4>', unsafe_allow_html=True)
     
     # Формируем список всех провайдеров с пометками доступности
     openai_status = "🟢" if OPENAI_API_KEY else "⚪"
@@ -525,7 +550,7 @@ def main():
     
     # Проверяем, есть ли хотя бы один настроенный провайдер
     if not OPENAI_API_KEY and not OPENROUTER_API_KEY:
-        st.error("❌ Не настроен ни один API ключ. Добавьте OPENAI_API_KEY или OPENROUTER_API_KEY в файл .env")
+        st.error(t("no_keys", lang))
         st.stop()
     
     # По умолчанию выбираем первый доступный
@@ -543,17 +568,17 @@ def main():
     # Предупреждение если выбран недоступный провайдер
     if not is_available:
         env_var = "OPENAI_API_KEY" if selected_provider == "OpenAI" else "OPENROUTER_API_KEY"
-        st.warning(f"⚠️ {selected_provider} недоступен. Добавьте {env_var} в файл .env")
+        st.warning(t("provider_unavailable", lang, provider=selected_provider, env=env_var))
     
     st.markdown("<br>", unsafe_allow_html=True)
     
     # Поле для ввода темы
-    st.markdown('<h4 style="color: #4A4F46; margin-bottom: 0.5rem;">💭 Тема или задача</h4>', unsafe_allow_html=True)
+    st.markdown(f'<h4 style="color: #4A4F46; margin-bottom: 0.5rem;">{t("topic", lang)}</h4>', unsafe_allow_html=True)
     
     if selected_type == "caption":
         topic = st.text_area(
-            "Введите исходный текст для редактирования",
-            placeholder="Вставьте текст, который нужно отредактировать в выбранном вайбе...",
+            t("caption_label", lang),
+            placeholder=t("caption_placeholder", lang),
             height=150,
             label_visibility="collapsed",
             key="caption_input"
@@ -562,14 +587,14 @@ def main():
         char_count = len(topic) if topic else 0
         counter_html = f"""
         <div id="char-counter" style="text-align: right; color: #A38DA2; font-size: 0.85rem; margin-top: 0.3rem;">
-            📝 <span id="count-value">{char_count}</span> знаков
+            📝 <span id="count-value">{char_count}</span> {t("chars", lang)}
         </div>
         <script>
         (function() {{
             // Находим textarea в родительском документе
             const textareas = parent.document.querySelectorAll('textarea');
             textareas.forEach(function(textarea) {{
-                if (textarea.placeholder && textarea.placeholder.includes('Вставьте текст')) {{
+                if (textarea.placeholder && textarea.placeholder === {json.dumps(t("caption_placeholder", lang))}) {{
                     // Обновляем счётчик при вводе
                     textarea.addEventListener('input', function() {{
                         const counter = document.getElementById('count-value');
@@ -591,7 +616,7 @@ def main():
     else:
         topic = st.text_input(
             "Тема",
-            placeholder="Например: Утренние ритуалы для гармонии",
+            placeholder=t("topic_placeholder", lang),
             label_visibility="collapsed"
         )
     
@@ -601,41 +626,42 @@ def main():
     col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
     with col_btn2:
         generate_clicked = st.button(
-            "✨ Сгенерировать контент",
+            t("generate", lang),
             use_container_width=True
         )
     
     remaining = max(0, DEMO_MAX_PER_SESSION - st.session_state.get('generations', 0))
     with col_btn2:
         st.caption(
-            f"Демо-режим: осталось {remaining} из {DEMO_MAX_PER_SESSION} генераций в этой сессии"
+            t("demo_left", lang, left=remaining, total=DEMO_MAX_PER_SESSION)
         )
 
     # Генерация контента
     if generate_clicked:
-        limit_message = check_demo_limit()
+        limit_message = check_demo_limit(lang)
         if not topic.strip():
-            st.warning("⚠️ Пожалуйста, введите тему или текст для генерации")
+            st.warning(t("enter_topic", lang))
         elif limit_message:
             st.warning(f"⏳ {limit_message}")
         else:
-            with st.spinner(f"🔮 Генерирую через {selected_provider}..."):
+            with st.spinner(t("generating", lang, provider=selected_provider)):
                 result = generate_content_api(
                     vibe=selected_vibe,
                     task_type=selected_type,
                     topic=topic,
                     original_text=topic if selected_type == "caption" else None,
-                    provider=selected_provider
+                    provider=selected_provider,
+                    lang=lang,
                 )
             
             if result['success']:
                 register_generation()
 
                 st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown("### ✨ Результат")
+                st.markdown(t("result", lang))
                 
                 # Получаем русское название вайба
-                vibe_name_ru = VIBE_NAMES_RU.get(selected_vibe, vibe_info['name'])
+                vibe_name_ru = VIBE_NAMES[lang].get(selected_vibe, vibe_info['name'])
                 content_type_name = selected_type_display.split(' ', 1)[1]
                 
                 # Карточка с результатом
@@ -693,15 +719,15 @@ def main():
                         transition: all 0.3s ease;
                         box-sizing: border-box;
                     " onmouseover="this.style.backgroundColor='#7A928B'" onmouseout="this.style.backgroundColor='#8CA29B'">
-                        📋 Скопировать
+                        {t("copy", lang)}
                     </button>
                     <script>
                     function copyToClipboard() {{
                         const text = '{escaped_content}';
                         navigator.clipboard.writeText(text).then(function() {{
-                            document.getElementById('copy-btn').innerHTML = '✅ Скопировано!';
+                            document.getElementById('copy-btn').innerHTML = {json.dumps(t("copied", lang))};
                             setTimeout(function() {{
-                                document.getElementById('copy-btn').innerHTML = '📋 Скопировать';
+                                document.getElementById('copy-btn').innerHTML = {json.dumps(t("copy", lang))};
                             }}, 2000);
                         }}).catch(function(err) {{
                             // Fallback для старых браузеров
@@ -711,9 +737,9 @@ def main():
                             textarea.select();
                             document.execCommand('copy');
                             document.body.removeChild(textarea);
-                            document.getElementById('copy-btn').innerHTML = '✅ Скопировано!';
+                            document.getElementById('copy-btn').innerHTML = {json.dumps(t("copied", lang))};
                             setTimeout(function() {{
-                                document.getElementById('copy-btn').innerHTML = '📋 Скопировать';
+                                document.getElementById('copy-btn').innerHTML = {json.dumps(t("copy", lang))};
                             }}, 2000);
                         }});
                     }}
@@ -732,10 +758,10 @@ def main():
                     # Формируем markdown контент для скачивания
                     md_content = f"""# {content_type_name}
 
-**Вайб:** {vibe_info['emojis']} {vibe_name_ru}  
-**Тема:** {topic}  
-**Модель:** {result.get('provider', 'Unknown')} ({result.get('model', 'unknown')})  
-**Дата:** {datetime.now().strftime('%d.%m.%Y %H:%M')}
+**{t("md_vibe", lang)}:** {vibe_info['emojis']} {vibe_name_ru}  
+**{t("md_topic", lang)}:** {topic}  
+**{t("md_model", lang)}:** {result.get('provider', 'Unknown')} ({result.get('model', 'unknown')})  
+**{t("md_date", lang)}:** {datetime.now().strftime('%d.%m.%Y %H:%M')}
 
 ---
 
@@ -743,32 +769,32 @@ def main():
 
 ---
 
-*Создано с помощью Познай себя — Генератор контента*
+*{t("md_footer", lang)}*
 """
                     # Формируем имя файла с указанием модели
                     provider_tag = result.get('provider', 'unknown').lower()
                     filename = f"content_{selected_type}_{provider_tag}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
                     
                     st.download_button(
-                        label="📥 Скачать .md",
+                        label=t("download", lang),
                         data=md_content,
                         file_name=filename,
                         mime="text/markdown",
                         use_container_width=True
                     )
                 
-                st.success("✅ Контент готов! Скопируйте или скачайте результат.")
+                st.success(t("ready", lang))
                 
             else:
                 st.error(f"❌ {result['error']}")
     
     # Футер
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown("""
+    st.markdown(f"""
     <div class="footer">
         <p>🌿 Познай себя — Know Yourself</p>
         <p style="font-size: 0.8rem; opacity: 0.7;">
-            Генератор контента для осознанного маркетинга
+            {t("footer_sub", lang)}
         </p>
     </div>
     """, unsafe_allow_html=True)
