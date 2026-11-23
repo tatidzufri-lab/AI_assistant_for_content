@@ -9,17 +9,17 @@ load_dotenv()
 # API Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 # API Keys
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')  # для DeepSeek через OpenRouter
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')  # бесплатная модель через OpenRouter
 
 # Модели
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o')
-OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-r1-0528:free')
+OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'nvidia/nemotron-3-ultra-550b-a55b:free')
 
 # Для обратной совместимости
 MODEL = OPENAI_MODEL
 TEMPERATURE = 0.8  # creative для контента
 MAX_TOKENS = 500  # для OpenAI
-MAX_TOKENS_OPENROUTER = 4000  # для DeepSeek R1 (reasoning-модель требует больше токенов)
+MAX_TOKENS_OPENROUTER = 4000  # с запасом: рассуждающим моделям нужно больше токенов
 
 # VIBES - 5 фирменных настроений бренда
 VIBES = {

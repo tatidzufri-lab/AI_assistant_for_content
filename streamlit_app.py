@@ -420,7 +420,7 @@ def generate_content_api(vibe: str, task_type: str, topic: str, original_text: O
                     {'role': 'user', 'content': user_prompt}
                 ],
                 'temperature': TEMPERATURE,
-                'max_tokens': MAX_TOKENS_OPENROUTER  # DeepSeek R1 требует больше токенов
+                'max_tokens': MAX_TOKENS_OPENROUTER  # рассуждающим моделям нужно больше токенов
             }
             
             response = requests.post(api_url, headers=headers, json=payload, timeout=60)
@@ -428,7 +428,7 @@ def generate_content_api(vibe: str, task_type: str, topic: str, original_text: O
             
             data = response.json()
             message = data['choices'][0]['message']
-            # DeepSeek R1 возвращает контент в reasoning_content, а не в content
+            # Рассуждающие модели иногда возвращают текст в reasoning_content, а не в content
             content = message.get('content') or message.get('reasoning_content', '')
             content = content.strip() if content else ''
             model_used = OPENROUTER_MODEL
